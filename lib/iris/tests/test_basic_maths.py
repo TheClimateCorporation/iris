@@ -397,6 +397,11 @@ class TestExponentiate(tests.IrisTest):
         with self.assertRaises(TypeError):
             iris.analysis.maths.exponentiate('not a cube', 2)
 
+    def test_invalid_exponentiate(self):
+        exponent = np.random.randn(*self.cube.data.shape)
+        with self.assertRaises(ValueError):
+            pow(self.cube, exponent)
+
 
 class TestExponential(tests.IrisTest):
     def setUp(self):
@@ -445,10 +450,11 @@ class TestMaskedArrays(tests.IrisTest):
 
     def test_operator_in_place(self):
         for test_op in self.iops:
+            data1 = self.data1.copy()
             test_op(self.cube1, self.cube2)
-            test_op(self.data1, self.data2)
+            test_op(data1, self.data2)
 
-            np.testing.assert_array_equal(self.cube1.data, self.data1)
+            np.testing.assert_array_equal(self.cube1.data, data1)
 
     def test_operator_scalar(self):
         for test_op in self.ops:

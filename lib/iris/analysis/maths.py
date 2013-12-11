@@ -21,6 +21,7 @@ Basic mathematical and statistical operations.
 from __future__ import division
 import warnings
 import math
+import textwrap
 
 import numpy as np
 
@@ -132,6 +133,13 @@ def _assert_matching_units(cube, other, operation_noun):
             (cube.units, other.units, operation_noun))
 
 
+def _assert_dimensionless_units(cube, operation_noun):
+    if hasattr(cube, 'units') and not cube.units.is_dimensionless():
+        raise iris.exceptions.NotYetImplementedError(
+            'Non-dimensionless units (%s) %s not implemented' %
+            (cube.units, operation_noun))
+
+
 def add(cube, other, dim=None, ignore=True, in_place=False):
     """
     Calculate the sum of two cubes, or the sum of a cube and a coordinate or scalar
@@ -218,7 +226,10 @@ def _add_subtract_common(operation_function, operation_noun,
         # get a coordinate comparison of this cube and the cube to do the
         # operation with
         coord_comp = iris.analysis.coord_comparison(cube, other)
+    else:
+        coord_comp = None
 
+    if coord_comp:
         if coord_comp['transposable']:
             # User does not need to transpose their cubes if numpy
             # array broadcasting will make the dimensions match
@@ -267,6 +278,126 @@ def _add_subtract_common(operation_function, operation_noun,
             new_cube.remove_coord(coord)
 
     return new_cube
+
+
+_BINARY_OP_DOC = """
+{description!s}
+
+Args:
+
+* cube:
+    An instance of :class:`iris.cube.Cube`.
+* other:
+    An instance of :class:`iris.cube.Cube` or :class:`iris.coords.Coord`, or a
+    number.
+
+Kwargs:
+
+* dim:
+    If supplying a coord with no match on the cube, you must supply the
+    dimension to process.
+
+Returns:
+    An instance of :class:`iris.cube.Cube`.
+"""
+
+
+def _add_cmp_docstring(*args, **kwargs):
+    def wrapper(func):
+        desc = ("Calculate the truth value of (`cube {!s} other`) "
+                "element-wise between a cube and another cube, coordinate or "
+                "number")
+        func.__doc__ = _BINARY_OP_DOC.format(
+            description=textwrap.fill(desc.format(*args, **kwargs)))
+        return func
+    return wrapper
+
+
+def _cmp_common(operation_function, cube, other, dim=None):
+    operation_noun = operation_function.__name__
+    _assert_matching_units(cube, other, operation_noun)
+    return _binary_op_common(operation_function, operation_noun, cube, other,
+                             iris.unit.as_unit('1'), dim, in_place=False)
+
+
+@_add_cmp_docstring('==')
+def equal(cube, other, dim=None):
+    return _cmp_common(np.equal, cube, other, dim)
+
+
+@_add_cmp_docstring('!=')
+def not_equal(cube, other, dim=None):
+    return _cmp_common(np.not_equal, cube, other, dim)
+
+
+@_add_cmp_docstring('>=')
+def greater_equal(cube, other, dim=None):
+    return _cmp_common(np.greater_equal, cube, other, dim)
+
+
+@_add_cmp_docstring('<=')
+def less_equal(cube, other, dim=None):
+    return _cmp_common(np.less_equal, cube, other, dim)
+
+
+@_add_cmp_docstring('>')
+def greater(cube, other, dim=None):
+    return _cmp_common(np.greater, cube, other, dim)
+
+
+@_add_cmp_docstring('<')
+def less(cube, other, dim=None):
+    return _cmp_common(np.less, cube, other, dim)
+
+
+def _add_bitwise_binary_docstring(*args, **kwargs):
+    def wrapper(func):
+        desc = ("Compute the bit-wise {!s} (`cube {!s} other`) element-wise "
+                "between a cube and another cube, coordinate or number")
+        func.__doc__ = _BINARY_OP_DOC.format(
+            description=textwrap.fill(desc.format(*args, **kwargs)))
+        return func
+    return wrapper
+
+
+@_add_bitwise_binary_docstring('AND', '&')
+def bitwise_and(cube, other, dim=None):
+    _assert_dimensionless_units(cube, 'bitwise_and')
+    return _cmp_common(np.bitwise_and, cube, other, dim)
+
+
+@_add_bitwise_binary_docstring('OR', '|')
+def bitwise_or(cube, other, dim=None):
+    _assert_dimensionless_units(cube, 'bitwise_or')
+    return _cmp_common(np.bitwise_or, cube, other, dim)
+
+
+@_add_bitwise_binary_docstring('XOR', '^')
+def bitwise_xor(cube, other, dim=None):
+    _assert_dimensionless_units(cube, 'bitwise_xor')
+    return _cmp_common(np.bitwise_xor, cube, other, dim)
+
+
+def bitwise_not(cube, in_place=False):
+    """
+    Compute bit-wise NOT, or bit-wise inversion, element-wise to a cube (`~cube`)
+
+    Args:
+
+    * cube:
+        An instance of :class:`iris.cube.Cube`.
+
+    Kwargs:
+
+    * in_place:
+        Whether to create a new Cube, or alter the given "cube".
+
+    Returns:
+        An instance of :class:`iris.cube.Cube`.
+    """
+    _assert_dimensionless_units(cube, 'bitwise_not')
+    return _math_op_common(cube, np.bitwise_not, iris.unit.Unit('1'),
+                           in_place=in_place)
 
 
 def multiply(cube, other, dim=None, in_place=False):
@@ -325,16 +456,55 @@ def divide(cube, other, dim=None, in_place=False):
                              in_place)
 
 
-def exponentiate(cube, exponent, in_place=False):
+def _positive(cube):
+    return cube
+
+
+def negative(cube, in_place=False):
     """
-    Returns the result of the given cube to the power of a scalar.
+    Calculate the element-wise negative of a cube (`-cube`)
+
+    Args:
+
+    * cube:
+        An instance of :class:`iris.cube.Cube`.
+
+    Returns:
+        An instance of :class:`iris.cube.Cube`.
+    """
+    return _math_op_common(cube, np.negative, cube.units, in_place)
+
+
+def reciprocal(cube, in_place=False):
+    """
+    Calculate the element-wise reciprocal of a cube (`1/cube`)
+
+    Args:
+
+    * cube:
+        An instance of :class:`iris.cube.Cube`.
+
+    Returns:
+        An instance of :class:`iris.cube.Cube`.
+    """
+    def safe_reciprocal(x, out=None):
+        # cast to float in over to avoid issues with integers
+        return np.reciprocal(np.asanyarray(x, dtype=float), out)
+    return _math_op_common(cube, safe_reciprocal, cube.units ** -1, in_place)
+
+
+def exponentiate(cube, exponent, dim=None, in_place=False):
+    """
+    Returns the exponential of a cube to the power of another cube, coordinate
+    or number (`cube ** exponent`)
 
     Args:
 
     * cube:
         An instance of :class:`iris.cube.Cube`.
     * exponent:
-        The integer or floating point exponent.
+        An instance of :class:`iris.cube.Cube` or :class:`iris.coords.Coord`, or a number.
+        If a cube, must have units '1'.
 
         .. note:: When applied to the cube's unit, the exponent must result in a unit
             that can be described using only integer powers of the basic units.
@@ -351,10 +521,55 @@ def exponentiate(cube, exponent, in_place=False):
 
     """
     _assert_is_cube(cube)
-    def power(data, out=None):
-        return np.power(data, exponent, out)
-    return _math_op_common(cube, power, cube.units ** exponent,
-                           in_place=in_place)
+    operation_noun = 'exponentiate'
+    _assert_dimensionless_units(exponent, operation_noun)
+    if cube.units == '1':
+        new_unit = cube.units
+    else:
+        if isinstance(exponent, iris.coords.Coord):
+            exponent = _broadcast_cube_coord_data(cube, exponent,
+                                                  operation_noun, dim)
+        elif isinstance(exponent, iris.cube.Cube):
+            exponent = exponent.data
+        unique_exponents = np.unique(np.asarray(exponent))
+        if not unique_exponents.size == 1:
+            raise ValueError(('only constant exponents allowed in %s if cube '
+                              'has non-dimensionless units (otherwise, the '
+                              'new cube\'s units would be inconsistent)')
+                              % operation_noun)
+        new_unit = cube.units ** unique_exponents[0]
+    return _binary_op_common(np.power, operation_noun, cube, exponent,
+                             new_unit, dim, in_place)
+
+
+def reverse_exponentiate(cube, base, dim=None):
+    """
+    Returns the result of the exponential of a cube with the base given by
+    another cube, coordinate or number (`base ** cube`)
+
+    Args:
+
+    * cube:
+        An instance of :class:`iris.cube.Cube`. Must have units '1'.
+    * base:
+        An instance of :class:`iris.cube.Cube` or :class:`iris.coords.Coord`,
+        or a number. If a cube, must have units '1'.
+
+    Kwargs:
+
+    * in_place:
+        Whether to create a new Cube, or alter the given "cube".
+
+    Returns:
+        An instance of :class:`iris.cube.Cube`.
+    """
+    operation_noun = 'reverse_exponentiate'
+    _assert_dimensionless_units(cube, operation_noun)
+    _assert_dimensionless_units(base, operation_noun)
+    def rpower(x1, x2):
+        return np.power(x2, x1)
+    return _binary_op_common(rpower, operation_noun, cube, base, cube.units,
+                             dim, in_place=False)
 
 
 def exp(cube, in_place=False):
@@ -364,11 +579,7 @@ def exp(cube, in_place=False):
     Args:
 
     * cube:
-        An instance of :class:`iris.cube.Cube`.
-
-    .. note::
-
-        Taking an exponential will return a cube with dimensionless units.
+        An instance of :class:`iris.cube.Cube`. Must have units '1'.
 
     Kwargs:
 
@@ -379,8 +590,13 @@ def exp(cube, in_place=False):
         An instance of :class:`iris.cube.Cube`.
 
     """
+    try:
+        _assert_dimensionless_units(cube, 'exp')
+    except iris.exceptions.NotYetImplementedError:
+        warnings.warn('accepting cubes with non-dimensionless units has been '
+                      'deprecated for exp')
     return _math_op_common(cube, np.exp, iris.unit.Unit('1'),
-                           in_place=in_place)
+                            in_place=in_place)
 
 
 def log(cube, in_place=False):
@@ -402,7 +618,7 @@ def log(cube, in_place=False):
 
     """
     return _math_op_common(cube, np.log, cube.units.log(math.e),
-                           in_place=in_place)
+                            in_place=in_place)
 
 
 def log2(cube, in_place=False):
@@ -446,8 +662,7 @@ def log10(cube, in_place=False):
 
     """
     return _math_op_common(cube, np.log10, cube.units.log(10),
-                           in_place=in_place)
-
+                            in_place=in_place)
 
 def _binary_op_common(operation_function, operation_noun, cube, other,
                       new_unit, dim=None, in_place=False):
