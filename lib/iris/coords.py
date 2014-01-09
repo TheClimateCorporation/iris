@@ -853,9 +853,11 @@ class Coord(CFVariableMixin):
             raise ValueError('Cannot partially collapse a coordinate (%s).'
                              % self.name())
 
-        if self.units in ['no_unit', 'unknown']:
+        if (self.units in ['no_unit', 'unknown'] and
+                not isinstance(self, DimCoord)):
             # Collapse the coordinate by serializing the points and
-            # bounds as strings.
+            # bounds as strings. Only do this for AuxCoord coordinates since
+            # DimCoords must always be numeric.
             serialize = lambda x: '|'.join([str(i) for i in x.flatten()])
             bounds = None
             if self.bounds is not None:
